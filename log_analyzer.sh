@@ -1,53 +1,69 @@
 #!/bin/bash
-# Log File Analyzer Script - Accuknox Assignment
-# Author: Preethi
-# Description: Analyzes web server logs for 404 errors, top pages, and top IPs.
+# log_analyzer.sh
+# Simple Log File Analyzer (Bash)
 # Usage: bash log_analyzer.sh <path-to-log-file>
+# If no path provided, default = /var/log/nginx/access.log
 
-LOG_FILE=$1
-REPORT_DIR=~/monitoring
-REPORT_FILE="$REPORT_DIR/log_report_$(date +%F).txt"
+set -euo pipefail
 
-# Default log file path if none given
-if [ -z "$LOG_FILE" ]; then
-    LOG_FILE="/var/log/nginx/access.log"
-fi
+LOG_FILE="${1:-/var/log/nginx/access.log}"   # default if not provided
+OUT_DIR="${2:-$HOME/monitoring}"
+REPORT_FILE="$OUT_DIR/log_report_$(date +%F).txt"
 
-# Check if the log file exists
+mkdir -p "$OUT_DIR"
+
+# Check file exists and readable
 if [ ! -f "$LOG_FILE" ]; then
-    echo "ERROR: Log file not found: $LOG_FILE"
-    echo "Usage: bash log_analyzer.sh <path-to-log-file>"
-    exit 1
+  echo "ERROR: Log file not found: $LOG_FILE"
+  echo "Usage: bash log_analyzer.sh /path/to/access.log"
+  exit 1
 fi
 
-# Create report directory if not exists
-mkdir -p "$REPORT_DIR"
+if [ ! -r "$LOG_FILE" ]; then
+  echo "ERROR: Log file not readable: $LOG_FILE"
+  echo "Tip: you may need to run with sudo if it's in /var/log"
+  exit 1
+fi
 
-# Start writing report
-echo "----------------------------------------" > "$REPORT_FILE"
-echo "Log File Analysis Report" >> "$REPORT_FILE"
-echo "Date: $(date)" >> "$REPORT_FILE"
-echo "Log File: $LOG_FILE" >> "$REPORT_FILE"
-echo "----------------------------------------" >> "$REPORT_FILE"
+echo "Analyzing: $LOG_FILE"
+echo "Report: $REPORT_FILE"
 
-# 1️⃣ Total number of requests
-TOTAL_REQUESTS=$(wc -l < "$LOG_FILE")
-echo "Total requests: $TOTAL_REQUESTS" >> "$REPORT_FILE"
+{
+  echo "----------------------------------------"
+  echo "Log Analysis Report"
+  echo "Generated: $(date)"
+  echo "Source: $LOG_FILE"
+  echo "----------------------------------------"
 
-# 2️⃣ Count of 404 errors
-ERROR_404=$(grep " 404 " "$LOG_FILE" | wc -l)
-echo "404 errors: $ERROR_404" >> "$REPORT_FILE"
+  # Total requests (lines)
+  TOTAL=$(wc -l < "$LOG_FILE" | tr -d ' ')
+  echo "Total requests: $TOTAL"
 
-# 3️⃣ Top 5 requested pages
-echo -e "\nTop 5 Requested Pages:" >> "$REPORT_FILE"
-awk '{print $7}' "$LOG_FILE" | sort | uniq -c | sort -nr | head -5 >> "$REPORT_FILE"
+  # Count 404 responses (status code column)
+  # Try robust awk scan for a 3-digit status code near the request
+  NOTFOUND=$(awk '{ for(i=1;i<=NF;i++) if($i ~ /^[0-9]{3}$/){ if($i==404) c++ ; break } } END{print c+0}' "$LOG_FILE")
+  echo "404 errors: $NOTFOUND"
 
-# 4️⃣ Top 5 IP addresses
-echo -e "\nTop 5 IP Addresses:" >> "$REPORT_FILE"
-awk '{print $1}' "$LOG_FILE" | sort | uniq -c | sort -nr | head -5 >> "$REPORT_FILE"
+  # Top requested pages (attempt to extract the request path)
+  echo
+  echo "Top 10 requested pages (path) with counts:"
+  awk '{print $7}' "$LOG_FILE" 2>/dev/null | sort | uniq -c | sort -nr | head -n 10
 
-echo "----------------------------------------" >> "$REPORT_FILE"
+  # Top IP addresses
+  echo
+  echo "Top 10 IP addresses with most requests:"
+  awk '{print $1}' "$LOG_FILE" | sort | uniq -c | sort -nr | head -n 10
+
+  # Top 5 user agents (combined log format; optional)
+  echo
+  echo "Top 5 User Agents (if available):"
+  awk -F\" '{ if($6!="") print $6 }' "$LOG_FILE" 2>/dev/null | sort | uniq -c | sort -nr | head -n 5
+
+  echo "----------------------------------------"
+} > "$REPORT_FILE"
+
 echo "Report saved to: $REPORT_FILE"
+echo
+# show the start of the report on screen
+head -n 50 "$REPORT_FILE" || true
 
-# Print report summary on screen
-cat "$REPORT_FILE"
